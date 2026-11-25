@@ -1,0 +1,109 @@
+require('dotenv').config();
+var createError = require('http-errors');
+var express = require('express');
+var path = require('path');
+var cookieParser = require('cookie-parser');
+var logger = require('morgan');
+var cors = require('cors');
+var mongoose = require('mongoose');
+
+var indexRouter = require('./routes/index');
+
+var categoryRouter = require('./routes/category');
+var productRouter = require('./routes/product');
+
+var authRouter = require("./routes/auth");
+var reviewRouter = require("./routes/review");
+var orderRouter = require("./routes/order");
+var userRouter = require("./routes/user");
+
+
+
+var app = express();
+
+// view engine setup
+app.set('views', path.join(__dirname, 'views'));
+app.set('view engine', 'jade');
+
+// ===== CORS (Important for React) =====
+app.use(cors({
+  origin: "http://localhost:5173",   // Your React Vite port
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true
+}));
+
+app.use(logger('dev'));
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+app.use(cookieParser());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// ===== Routes =====
+app.use('/', indexRouter);
+
+app.use('/categories', categoryRouter);   // Fixed
+app.use('/product', productRouter);      // Fixed
+       // Fixed
+app.use("/api/auth", authRouter);
+app.use("/reviews", require("./routes/review"));
+app.use("/orders", require("./routes/order"));
+app.use("/users", require("./routes/user"));
+
+// ===== MongoDB Connection (Your Database) =====
+// ===== MongoDB Connection (Your Database) =====
+const DB_STR = "mongodb+srv://dhavalll852004_db_user:HAy6x0lelQWI4WvP@cluster0.1okxzjw.mongodb.net/dhaval";
+
+mongoose.connect(DB_STR)
+  .then(async () => {
+    console.log("Mongodb Connected Successfully");
+
+    // Old orders were saved as Delivered by mistake and have no tracking history.
+    // Move only those back to Placed so admin can set the real shipping step.
+    try {
+      const Order = require("./models/Order");
+      const fixed = await Order.updateMany(
+        {
+          status: "Delivered",
+          $or: [
+            { statusHistory: { $exists: false } },
+            { statusHistory: { $size: 0 } },
+          ],
+        },
+        {
+          $set: {
+            status: "Placed",
+            statusHistory: [
+              { status: "Placed", note: "Order placed", at: new Date() },
+            ],
+          },
+        }
+      );
+      if (fixed.modifiedCount) {
+        console.log(`Reset ${fixed.modifiedCount} orders from Delivered to Placed`);
+      }
+    } catch (migrateErr) {
+      console.log("Order status reset skipped:", migrateErr.message);
+    }
+
+    // 👈 Yeh code chalte hi purana title_1 unique index Atlas se automatic drop ho jayega!
+    try {
+      await mongoose.connection.collection("categories").dropIndex("title_1");
+      console.log("✅ Purana title_1 index successfully delete ho gaya!");
+    } catch (err) {
+      console.log("ℹ️ Index pehle se deleted hai ya nahi mila.");
+    }
+  })
+  .catch((err) => console.log("Connection Failed", err));
+app.use(function (req, res, next) {
+  next(createError(404));
+});
+
+// error handler
+app.use(function (err, req, res, next) {
+  res.locals.message = err.message;
+  res.locals.error = req.app.get('env') === 'development' ? err : {};
+  res.status(err.status || 500);
+  res.render('error');
+});
+
+module.exports = app;
